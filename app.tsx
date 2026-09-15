@@ -1,27 +1,54 @@
 // bb-plugin-swipe-threads — subtle bottom back/forward for visit history.
 // No swipe gestures. Tap-only controls under the composer.
+// History covers every screen: threads, compose, settings, plugin panels, …
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   definePluginApp,
   useBbContext,
   useBbNavigate,
+  type BbNavigate,
 } from "@get-bb/plugin-sdk/app";
 
-const STACK_KEY = "bb-swipe-visit-stack-v1";
-const INDEX_KEY = "bb-swipe-visit-index-v1";
+const STACK_KEY = "bb-swipe-visit-stack-v2";
+const INDEX_KEY = "bb-swipe-visit-index-v2";
+const LEGACY_STACK_KEY = "bb-swipe-visit-stack-v1";
+const LEGACY_INDEX_KEY = "bb-swipe-visit-index-v1";
 const COOLDOWN_MS = 280;
+const MAX_STACK = 80;
 
 type StackState = { stack: string[]; index: number };
 
+function readPath(): string {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+/** Visit keys: `t:<threadId>` or `p:<pathname+search>`. */
+function visitKey(threadId: string | null, path: string): string {
+  if (threadId) return `t:${threadId}`;
+  return `p:${path || "/"}`;
+}
+
+function normalizeStoredKey(raw: string): string {
+  if (raw.startsWith("t:") || raw.startsWith("p:")) return raw;
+  // v1 stored bare thread ids.
+  if (raw.startsWith("thr_")) return `t:${raw}`;
+  return `p:${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
 function readStack(): StackState {
   try {
-    const stackRaw = sessionStorage.getItem(STACK_KEY);
-    const indexRaw = sessionStorage.getItem(INDEX_KEY);
-    const stack = stackRaw ? (JSON.parse(stackRaw) as unknown) : [];
-    const index = indexRaw !== null ? Number(indexRaw) : -1;
-    if (!Array.isArray(stack) || !stack.every((x) => typeof x === "string")) {
+    const stackRaw =
+      sessionStorage.getItem(STACK_KEY) ??
+      sessionStorage.getItem(LEGACY_STACK_KEY);
+    const indexRaw =
+      sessionStorage.getItem(INDEX_KEY) ??
+      sessionStorage.getItem(LEGACY_INDEX_KEY);
+    const parsed = stackRaw ? (JSON.parse(stackRaw) as unknown) : [];
+    if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) {
       return { stack: [], index: -1 };
     }
+    const stack = parsed.map(normalizeStoredKey);
+    const index = indexRaw !== null ? Number(indexRaw) : stack.length - 1;
     if (!Number.isFinite(index)) return { stack, index: stack.length - 1 };
     return { stack, index };
   } catch {
@@ -36,6 +63,64 @@ function writeStack(state: StackState): void {
   } catch {
     // ignore quota / private mode
   }
+}
+
+const locationListeners = new Set<() => void>();
+let historyPatched = false;
+
+function ensureLocationPatch(): void {
+  if (historyPatched || typeof window === "undefined") return;
+  historyPatched = true;
+  const notify = () => {
+    for (const listener of locationListeners) listener();
+  };
+  for (const method of ["pushState", "replaceState"] as const) {
+    const original = history[method].bind(history);
+    history[method] = (...args: Parameters<History["pushState"]>) => {
+      const result = original(...args);
+      queueMicrotask(notify);
+      return result;
+    };
+  }
+  window.addEventListener("popstate", notify);
+}
+
+function subscribeLocation(listener: () => void): () => void {
+  ensureLocationPatch();
+  locationListeners.add(listener);
+  return () => {
+    locationListeners.delete(listener);
+  };
+}
+
+function useLocationPath(): string {
+  const [path, setPath] = useState(() =>
+    typeof window === "undefined" ? "/" : readPath(),
+  );
+  useEffect(() => {
+    const sync = () => setPath(readPath());
+    sync();
+    return subscribeLocation(sync);
+  }, []);
+  return path;
+}
+
+function goToVisit(key: string, navigate: BbNavigate): void {
+  if (key.startsWith("t:")) {
+    const id = key.slice(2);
+    if (id) navigate.toThread(id);
+    return;
+  }
+  if (!key.startsWith("p:")) return;
+  const path = key.slice(2) || "/";
+  if (path === "/" || path === "") {
+    navigate.toCompose();
+    return;
+  }
+  if (readPath() === path) return;
+  // Cross-surface SPA nav (same trick as Agent Board): push + popstate.
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 const barStyle: CSSProperties = {
@@ -124,6 +209,7 @@ function useIsMobile(): boolean {
 function VisitHistoryBar() {
   const { threadId } = useBbContext();
   const navigate = useBbNavigate();
+  const path = useLocationPath();
   const isMobile = useIsMobile();
   const [state, setState] = useState<StackState>(() => readStack());
   const skipPushRef = useRef(false);
@@ -131,31 +217,34 @@ function VisitHistoryBar() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
 
+  const current = visitKey(threadId, path);
+
   useEffect(() => {
-    if (threadId === null) return;
     if (skipPushRef.current) {
       skipPushRef.current = false;
       return;
     }
     setState((prev) => {
       const cur = prev.stack[prev.index];
-      if (cur === threadId) return prev;
-      const stack = [...prev.stack.slice(0, prev.index + 1), threadId].slice(-80);
+      if (cur === current) return prev;
+      const stack = [...prev.stack.slice(0, prev.index + 1), current].slice(
+        -MAX_STACK,
+      );
       const next = { stack, index: stack.length - 1 };
       writeStack(next);
       return next;
     });
-  }, [threadId]);
+  }, [current]);
 
   // Mobile / coarse-pointer only — every surface (threads, compose, boards, settings).
   if (!isMobile) return null;
 
   const onStackIndex =
-    threadId === null ? -1 : state.stack.lastIndexOf(threadId);
-  // Off-thread surfaces (compose / Board / settings): Back returns to the
-  // latest visited thread if we have any history.
+    state.index >= 0 && state.stack[state.index] === current
+      ? state.index
+      : state.stack.lastIndexOf(current);
   const canBack =
-    threadId === null ? state.stack.length > 0 : onStackIndex > 0;
+    onStackIndex > 0 || (onStackIndex < 0 && state.stack.length > 0);
   const canForward =
     onStackIndex >= 0 && onStackIndex < state.stack.length - 1;
 
@@ -163,35 +252,35 @@ function VisitHistoryBar() {
     const now = performance.now();
     if (now < cooldownRef.current) return;
     setState((prev) => {
-      // If we're off-stack (Board/settings/compose), Back jumps to the latest
-      // visited thread; Forward is unused until you've gone Back from a thread.
       let fromIndex = prev.index;
-      if (threadId !== null) {
-        const at = prev.stack.indexOf(threadId);
-        if (at >= 0) fromIndex = at;
+      const at = prev.stack.lastIndexOf(current);
+      if (at >= 0) {
+        fromIndex = at;
       } else if (kind === "back") {
-        // Already "past" the tip — go to tip (most recent thread).
-        fromIndex = prev.index + 1;
+        // Off-stack: treat as "past the tip" so Back lands on the latest visit.
+        fromIndex = prev.stack.length;
+      } else {
+        return prev;
       }
 
       const nextIndex = kind === "back" ? fromIndex - 1 : fromIndex + 1;
       if (nextIndex < 0 || nextIndex >= prev.stack.length) return prev;
-      const id = prev.stack[nextIndex];
-      if (!id) return prev;
+      const key = prev.stack[nextIndex];
+      if (!key) return prev;
       cooldownRef.current = now + COOLDOWN_MS;
       skipPushRef.current = true;
       const next = { stack: prev.stack, index: nextIndex };
       writeStack(next);
-      navigateRef.current.toThread(id);
+      goToVisit(key, navigateRef.current);
       return next;
     });
   };
 
   return (
-    <div style={barStyle} role="navigation" aria-label="Thread history">
+    <div style={barStyle} role="navigation" aria-label="Visit history">
       <button
         type="button"
-        aria-label="Previous thread"
+        aria-label="Go back"
         disabled={!canBack}
         style={navBtn(!canBack, { borderRight: true })}
         onClick={() => go("back")}
@@ -208,7 +297,7 @@ function VisitHistoryBar() {
       </button>
       <button
         type="button"
-        aria-label="Next thread"
+        aria-label="Go forward"
         disabled={!canForward}
         style={navBtn(!canForward)}
         onClick={() => go("forward")}

@@ -1,6 +1,8 @@
 # Mobile History Bar — tap ← / Board / → under the composer.
 
-Mobile-only bottom navigation for BB: walk recent thread visits and open Agent Board. Hidden on desktop.
+Mobile-only bottom navigation for BB: walk recent visits across **every**
+screen (threads, new-thread/compose, settings, Agent Board, plugin panels) and
+open Agent Board. Hidden on desktop.
 
 ## Install
 
