@@ -125,6 +125,8 @@ function goToVisit(key: string, navigate: BbNavigate): void {
 
 /** Matches BB shell padding (`pb-[var(--bb-safe-area-bottom,…)]`). */
 const BB_SAFE_AREA_BOTTOM = "--bb-safe-area-bottom";
+const VISIT_BAR_INSET_VAR = "--bb-visit-bar-inset";
+const INSET_STYLE_ID = "bb-visit-history-bar-inset";
 /** Full bar box; tucked down so only a slim strip shows (original size). */
 const BAR_CHROME_PX = 48;
 const BAR_TUCK_PX = 40;
@@ -138,7 +140,8 @@ const barStyle: CSSProperties = {
   right: 0,
   // Tuck under the viewport so the bar stays the previous slim size.
   bottom: -BAR_TUCK_PX,
-  zIndex: 2147483000,
+  // Below BB drawers/dialogs (z-50) so Options / pickers aren't covered.
+  zIndex: 40,
   display: "flex",
   alignItems: "stretch",
   justifyContent: "stretch",
@@ -151,14 +154,58 @@ const barStyle: CSSProperties = {
   pointerEvents: "auto",
 };
 
-/** Reserve only the visible strip so compose chrome isn't covered. */
+/**
+ * Clear the bar everywhere: shell, compose, and overlays that pad with raw
+ * `env(safe-area-inset-bottom)` (Options drawers, pickers, etc.).
+ */
 function useVisitBarInset(active: boolean): void {
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
     root.style.setProperty(BB_SAFE_AREA_BOTTOM, BAR_INSET_CSS);
+    root.style.setProperty(VISIT_BAR_INSET_VAR, BAR_INSET_CSS);
+
+    let style = document.getElementById(INSET_STYLE_ID) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = INSET_STYLE_ID;
+      document.head.appendChild(style);
+    }
+    style.textContent = `
+      /* Shell already uses --bb-safe-area-bottom; remap raw env() utilities too. */
+      .pb-\\[env\\(safe-area-inset-bottom\\)\\] {
+        padding-bottom: var(${BB_SAFE_AREA_BOTTOM}, env(safe-area-inset-bottom)) !important;
+      }
+      .pb-\\[max\\(0\\.5rem\\,env\\(safe-area-inset-bottom\\)\\)\\] {
+        padding-bottom: max(0.5rem, var(${BB_SAFE_AREA_BOTTOM}, env(safe-area-inset-bottom))) !important;
+      }
+      .pb-\\[max\\(1rem\\,env\\(safe-area-inset-bottom\\)\\)\\] {
+        padding-bottom: max(1rem, var(${BB_SAFE_AREA_BOTTOM}, env(safe-area-inset-bottom))) !important;
+      }
+      .max-md\\:pb-\\[max\\(1rem\\,env\\(safe-area-inset-bottom\\)\\)\\] {
+        padding-bottom: max(1rem, var(${BB_SAFE_AREA_BOTTOM}, env(safe-area-inset-bottom))) !important;
+      }
+      @media (min-width: 640px) {
+        .sm\\:pb-\\[max\\(1\\.5rem\\,env\\(safe-area-inset-bottom\\)\\)\\] {
+          padding-bottom: max(1.5rem, var(${BB_SAFE_AREA_BOTTOM}, env(safe-area-inset-bottom))) !important;
+        }
+      }
+      /* Options / bottom sheets: sit above the visible bar strip. */
+      [data-persistent-drawer-content],
+      [data-vaul-drawer][data-vaul-drawer-direction="bottom"] {
+        bottom: var(${VISIT_BAR_INSET_VAR}, 0px) !important;
+      }
+      /* Portaled overlays that pin to the bottom edge. */
+      [data-bb-portaled-overlay].fixed.inset-x-0.bottom-0,
+      [data-bb-portaled-overlay].fixed.bottom-0 {
+        bottom: var(${VISIT_BAR_INSET_VAR}, 0px) !important;
+      }
+    `;
+
     return () => {
       root.style.removeProperty(BB_SAFE_AREA_BOTTOM);
+      root.style.removeProperty(VISIT_BAR_INSET_VAR);
+      style?.remove();
     };
   }, [active]);
 }
