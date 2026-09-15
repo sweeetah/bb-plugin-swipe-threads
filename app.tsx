@@ -123,24 +123,59 @@ function goToVisit(key: string, navigate: BbNavigate): void {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/** Matches BB shell padding (`pb-[var(--bb-safe-area-bottom,…)]`). */
+const BB_SAFE_AREA_BOTTOM = "--bb-safe-area-bottom";
+const BAR_HEIGHT_CSS = "calc(48px + env(safe-area-inset-bottom, 0px))";
+
 const barStyle: CSSProperties = {
   position: "fixed",
   left: 0,
   right: 0,
-  // 40px lower so we clear the follow-up composer.
-  bottom: -40,
+  bottom: 0,
   zIndex: 2147483000,
   display: "flex",
   alignItems: "stretch",
   justifyContent: "stretch",
   gap: 0,
-  height: "calc(48px + env(safe-area-inset-bottom, 0px))",
+  height: BAR_HEIGHT_CSS,
   padding: 0,
   margin: 0,
   background: "#ffffff",
   borderTop: "1px solid rgba(0,0,0,0.08)",
   pointerEvents: "auto",
 };
+
+/** Reserve space so compose chrome (model / thinking row) isn't covered. */
+function useVisitBarInset(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const root = document.documentElement;
+    root.style.setProperty(BB_SAFE_AREA_BOTTOM, BAR_HEIGHT_CSS);
+    return () => {
+      root.style.removeProperty(BB_SAFE_AREA_BOTTOM);
+    };
+  }, [active]);
+}
+
+function useKeyboardOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => {
+      // Same threshold BB uses when collapsing safe-area for the keyboard.
+      setOpen(window.innerHeight - vv.height >= 80);
+    };
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    };
+  }, []);
+  return open;
+}
 
 const AGENT_BOARD_PATH = "/plugins/agent-board/operations";
 
@@ -211,6 +246,8 @@ function VisitHistoryBar() {
   const navigate = useBbNavigate();
   const path = useLocationPath();
   const isMobile = useIsMobile();
+  const keyboardOpen = useKeyboardOpen();
+  const showBar = isMobile && !keyboardOpen;
   const [state, setState] = useState<StackState>(() => readStack());
   const skipPushRef = useRef(false);
   const cooldownRef = useRef(0);
@@ -218,6 +255,8 @@ function VisitHistoryBar() {
   navigateRef.current = navigate;
 
   const current = visitKey(threadId, path);
+
+  useVisitBarInset(showBar);
 
   useEffect(() => {
     if (skipPushRef.current) {
@@ -237,7 +276,8 @@ function VisitHistoryBar() {
   }, [current]);
 
   // Mobile / coarse-pointer only — every surface (threads, compose, boards, settings).
-  if (!isMobile) return null;
+  // Hide while the software keyboard is up so it doesn't fight the composer.
+  if (!showBar) return null;
 
   const onStackIndex =
     state.index >= 0 && state.stack[state.index] === current
