@@ -148,8 +148,10 @@ const barStyle: CSSProperties = {
   height: BAR_HEIGHT_CSS,
   padding: 0,
   margin: 0,
-  background: "#ffffff",
-  borderTop: "1px solid rgba(0,0,0,0.08)",
+  // Follow BB light/dark tokens (`.dark` on the document).
+  background: "var(--background, #ffffff)",
+  borderTop: "1px solid var(--border, rgba(0,0,0,0.08))",
+  color: "var(--foreground, rgba(0,0,0,0.55))",
   pointerEvents: "auto",
 };
 
@@ -245,9 +247,13 @@ function navBtn(
     height: "100%",
     borderRadius: 0,
     border: "none",
-    borderRight: opts.borderRight ? "1px solid rgba(0,0,0,0.06)" : "none",
-    background: "#ffffff",
-    color: disabled ? "rgba(0,0,0,0.22)" : "rgba(0,0,0,0.55)",
+    borderRight: opts.borderRight
+      ? "1px solid var(--border, rgba(0,0,0,0.06))"
+      : "none",
+    background: "var(--background, #ffffff)",
+    color: disabled
+      ? "color-mix(in oklab, var(--foreground, #000) 28%, transparent)"
+      : "color-mix(in oklab, var(--foreground, #000) 62%, transparent)",
     font: `600 ${opts.fontSize ?? 22}px/1 system-ui, sans-serif`,
     paddingTop: 8,
     paddingBottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
