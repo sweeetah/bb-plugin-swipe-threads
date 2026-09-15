@@ -125,13 +125,19 @@ function goToVisit(key: string, navigate: BbNavigate): void {
 
 /** Matches BB shell padding (`pb-[var(--bb-safe-area-bottom,…)]`). */
 const BB_SAFE_AREA_BOTTOM = "--bb-safe-area-bottom";
-const BAR_HEIGHT_CSS = "calc(48px + env(safe-area-inset-bottom, 0px))";
+/** Full bar box; tucked down so only a slim strip shows (original size). */
+const BAR_CHROME_PX = 48;
+const BAR_TUCK_PX = 40;
+const BAR_HEIGHT_CSS = `calc(${BAR_CHROME_PX}px + env(safe-area-inset-bottom, 0px))`;
+/** Visible overlap above the viewport bottom — what content must clear. */
+const BAR_INSET_CSS = `calc(${BAR_CHROME_PX - BAR_TUCK_PX}px + env(safe-area-inset-bottom, 0px))`;
 
 const barStyle: CSSProperties = {
   position: "fixed",
   left: 0,
   right: 0,
-  bottom: 0,
+  // Tuck under the viewport so the bar stays the previous slim size.
+  bottom: -BAR_TUCK_PX,
   zIndex: 2147483000,
   display: "flex",
   alignItems: "stretch",
@@ -145,12 +151,12 @@ const barStyle: CSSProperties = {
   pointerEvents: "auto",
 };
 
-/** Reserve space so compose chrome (model / thinking row) isn't covered. */
+/** Reserve only the visible strip so compose chrome isn't covered. */
 function useVisitBarInset(active: boolean): void {
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
-    root.style.setProperty(BB_SAFE_AREA_BOTTOM, BAR_HEIGHT_CSS);
+    root.style.setProperty(BB_SAFE_AREA_BOTTOM, BAR_INSET_CSS);
     return () => {
       root.style.removeProperty(BB_SAFE_AREA_BOTTOM);
     };
